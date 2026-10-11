@@ -132,7 +132,8 @@ export async function refreshMenuBar(): Promise<void> {
   }
 }
 
-// Only the menu bar command runs auto-off, so enable must fail before sleep is turned off if it cannot be launched.
+// Only the menu bar command runs auto-off. It is launched only after the session is saved, so its check sees the new
+// session instead of racing with it. If it cannot launch, enable undoes the start, because nothing would turn Lid Awake off.
 async function requireMenuBar(): Promise<void> {
   try {
     await launchCommand({ name: "menu-bar", type: LaunchType.Background });
@@ -227,10 +228,15 @@ async function autoDisable(): Promise<AutoDisableReason | null> {
 }
 
 export async function enable(minutes: number | null): Promise<void> {
-  await requireMenuBar();
   await serialized(() => startSession(minutes));
-  // Refreshed outside the queue so launching the menu bar command never holds up other session actions.
-  await refreshMenuBar();
+  try {
+    // Outside the queue so launching the menu bar command never holds up other session actions.
+    // This launch also refreshes the menu bar, so it is not repeated.
+    await requireMenuBar();
+  } catch (error) {
+    await serialized(() => stopSession({ allowPrompt: false })).catch(() => undefined);
+    throw error;
+  }
 }
 
 export async function disable(options: { allowPrompt?: boolean } = { allowPrompt: true }): Promise<void> {

@@ -253,22 +253,35 @@ describe("disable", () => {
 });
 
 describe("menu bar refresh failures", () => {
-  it("enable refuses to turn on when the menu bar command cannot be launched, without touching sleep", async () => {
+  it("enable undoes the start when the menu bar command cannot be launched", async () => {
     raycast.launchCommand.mockRejectedValue(new Error("Menu bar command not enabled"));
 
     await expect(enable(60)).rejects.toThrow(
       "Turn on the Lid Awake Menu Bar command in Raycast first. It turns Lid Awake off when the timer ends, the battery is low, or after a restart",
     );
-    expect(system.setSleepDisabled).not.toHaveBeenCalled();
+    expect(vi.mocked(system.setSleepDisabled).mock.calls).toEqual([[true], [false, { allowPrompt: false }]]);
     expect(storedSession()).toBeNull();
   });
 
-  it("enable launches the menu bar command before turning sleep off", async () => {
+  it("enable launches the menu bar command only after sleep is off and the session is saved", async () => {
+    let sessionAtLaunch: Session | null = null;
+    raycast.launchCommand.mockImplementation(async () => {
+      sessionAtLaunch = storedSession();
+    });
+
     await enable(60);
 
+    const sleepOn = vi.mocked(system.setSleepDisabled).mock.calls.findIndex(([on]) => on === true);
+    const sleepOrder = vi.mocked(system.setSleepDisabled).mock.invocationCallOrder[sleepOn];
     const launchOrder = raycast.launchCommand.mock.invocationCallOrder[0];
-    const sleepOrder = vi.mocked(system.setSleepDisabled).mock.invocationCallOrder[0];
-    expect(launchOrder).toBeLessThan(sleepOrder);
+    expect(sleepOrder).toBeLessThan(launchOrder);
+    expect(sessionAtLaunch).toEqual({ startedAt: NOW, endsAt: NOW + 60 * MINUTE, bootTime: BOOT });
+  });
+
+  it("enable launches the menu bar command exactly once on success", async () => {
+    await enable(60);
+
+    expect(raycast.launchCommand).toHaveBeenCalledTimes(1);
   });
 
   it("disable still succeeds when the menu bar command cannot be launched", async () => {
