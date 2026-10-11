@@ -97,8 +97,7 @@
   "commands": [
     {
       "name": "setup",
-      "title": "Setup Lid Awake",
-      "subtitle": "Lid Awake",
+      "title": "Set up Lid Awake",
       "description": "Install or remove the passwordless rule that lets Lid Awake toggle sleep",
       "mode": "view"
     },
@@ -119,14 +118,12 @@
     {
       "name": "toggle",
       "title": "Toggle Lid Awake",
-      "subtitle": "Lid Awake",
       "description": "Turn Lid Awake on for the default duration, or off",
       "mode": "no-view"
     },
     {
       "name": "menu-bar",
       "title": "Lid Awake Menu Bar",
-      "subtitle": "Lid Awake",
       "description": "Shows Lid Awake status and turns it off when the timer ends, the battery is low, or after a restart",
       "mode": "menu-bar",
       "interval": "1m"
