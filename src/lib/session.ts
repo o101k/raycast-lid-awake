@@ -120,6 +120,17 @@ export async function refreshMenuBar(): Promise<void> {
   }
 }
 
+// Only the menu bar command runs auto-off, so enable must fail before sleep is turned off if it cannot be launched.
+async function requireMenuBar(): Promise<void> {
+  try {
+    await launchCommand({ name: "menu-bar", type: LaunchType.Background });
+  } catch {
+    throw new Error(
+      "Turn on the Lid Awake Menu Bar command in Raycast first. It turns Lid Awake off when the timer ends, the battery is low, or after a restart",
+    );
+  }
+}
+
 async function startSession(minutes: number | null): Promise<void> {
   if (!(await isRuleInstalled())) {
     throw new Error("Run Set up Lid Awake first, so Lid Awake can turn itself off while the lid is closed");
@@ -201,6 +212,7 @@ async function autoDisable(): Promise<AutoDisableReason | null> {
 }
 
 export async function enable(minutes: number | null): Promise<void> {
+  await requireMenuBar();
   await serialized(() => startSession(minutes));
   // Refreshed outside the queue so launching the menu bar command never holds up other session actions.
   await refreshMenuBar();

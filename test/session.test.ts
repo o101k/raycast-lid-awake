@@ -205,11 +205,22 @@ describe("disable", () => {
 });
 
 describe("menu bar refresh failures", () => {
-  it("enable still succeeds when the menu bar command cannot be launched", async () => {
+  it("enable refuses to turn on when the menu bar command cannot be launched, without touching sleep", async () => {
     raycast.launchCommand.mockRejectedValue(new Error("Menu bar command not enabled"));
 
-    await expect(enable(60)).resolves.toBeUndefined();
-    expect(storedSession()).toEqual({ startedAt: NOW, endsAt: NOW + 60 * MINUTE, bootTime: BOOT });
+    await expect(enable(60)).rejects.toThrow(
+      "Turn on the Lid Awake Menu Bar command in Raycast first. It turns Lid Awake off when the timer ends, the battery is low, or after a restart",
+    );
+    expect(system.setSleepDisabled).not.toHaveBeenCalled();
+    expect(storedSession()).toBeNull();
+  });
+
+  it("enable launches the menu bar command before turning sleep off", async () => {
+    await enable(60);
+
+    const launchOrder = raycast.launchCommand.mock.invocationCallOrder[0];
+    const sleepOrder = vi.mocked(system.setSleepDisabled).mock.invocationCallOrder[0];
+    expect(launchOrder).toBeLessThan(sleepOrder);
   });
 
   it("disable still succeeds when the menu bar command cannot be launched", async () => {
