@@ -116,7 +116,7 @@ export default function Command() {
       </MenuBarExtra.Submenu>
       <MenuBarExtra.Section>
         <MenuBarExtra.Item
-          title="Setup…"
+          title="Set up…"
           icon={Icon.Gear}
           onAction={() => launchCommand({ name: "setup", type: LaunchType.UserInitiated }).catch(() => undefined)}
         />
