@@ -87,6 +87,17 @@ The setup installs `/etc/sudoers.d/raycast-lid-awake` with exactly this content 
 
 It lets your user run only those two `pmset` commands as root without a password. It does not grant any other root access. The file is validated with `visudo` before it is installed.
 
+## Development
+
+```sh
+npm test           # unit tests (Vitest)
+npm run typecheck  # TypeScript, covers src/ and test/
+npm run lint       # ray lint: ESLint, Prettier, manifest checks (needs internet access)
+npm run build      # production build
+```
+
+GitHub Actions (`.github/workflows/ci.yml`) runs all of these on pushes to `master` and on every pull request.
+
 ## Deploy to the Raycast Store
 
 1. `author` in `package.json` is set to your Raycast username (`o101k`).
