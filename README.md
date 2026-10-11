@@ -7,7 +7,7 @@ Keep your Mac awake with the lid closed. Lid Awake uses `pmset -a disablesleep`,
 1. Run **Set up Lid Awake** and choose **Install Passwordless Toggle**. macOS asks for your admin password once.
 2. Run **Lid Awake Menu Bar** once. Raycast menu bar commands must be run once before they appear in the menu bar, and this one is what turns Lid Awake off when the timer ends, the battery is low, or the Mac restarts.
 
-Without setup, Lid Awake still works, but macOS asks for your admin password every time it turns on or off.
+Setup is required before Lid Awake can turn on, because it has to turn itself off later (timer, low battery, restart) without asking for a password.
 
 ## Commands
 
