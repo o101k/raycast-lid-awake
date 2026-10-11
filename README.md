@@ -90,7 +90,7 @@ It lets your user run only those two `pmset` commands as root without a password
 ## Deploy to the Raycast Store
 
 1. Create a Raycast account and set `author` in `package.json` to your Raycast username.
-2. The Store requires the MIT license. This repo's `LICENSE` file is Apache-2.0, so replace it with MIT before publishing, or do not publish.
+2. The Store requires the MIT license. This repo is already MIT (`LICENSE` and `package.json`).
 3. Add 3 screenshots to a `metadata/` folder, 2000x1250 PNG each. Use Raycast's Window Capture with "Save to Metadata".
 4. `npm run lint` and `npm run build` must pass.
 5. Run `npm run publish`. It authenticates with GitHub and opens a PR on raycast/extensions. Respond to review comments there. Once merged, the extension appears in the Store within minutes.
@@ -101,4 +101,4 @@ Later releases use the same `npm run publish` command. If others contributed to 
 
 ## License
 
-Apache-2.0 (see `LICENSE`). See the Store note above about MIT.
+MIT (see `LICENSE`).
