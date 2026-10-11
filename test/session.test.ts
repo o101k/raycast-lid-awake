@@ -94,6 +94,22 @@ describe("enable", () => {
     expect(raycast.launchCommand).toHaveBeenCalledWith({ name: "menu-bar", type: "background" });
   });
 
+  it("turns sleep on again when auto-off turned it off while the session was saved", async () => {
+    // The default mock reports sleep off after the save, as if auto-off ran between the two steps.
+    await enable(60);
+
+    expect(vi.mocked(system.setSleepDisabled).mock.calls).toEqual([[true], [true]]);
+    expect(storedSession()).toEqual({ startedAt: NOW, endsAt: NOW + 60 * MINUTE, bootTime: BOOT });
+  });
+
+  it("turns sleep on only once when sleep is still on after the session is saved", async () => {
+    vi.mocked(system.isSleepDisabled).mockResolvedValue(true);
+
+    await enable(60);
+
+    expect(vi.mocked(system.setSleepDisabled).mock.calls).toEqual([[true]]);
+  });
+
   it("refuses to turn on when the passwordless rule is not installed, without touching sleep", async () => {
     vi.mocked(system.isRuleInstalled).mockResolvedValue(false);
 
@@ -187,7 +203,7 @@ describe("enable", () => {
   it.each([20, 5])("refuses to turn on at %i percent on battery with a 20 percent cutoff", async (percent) => {
     setBattery({ hasBattery: true, percent, onAC: false });
 
-    await expect(enable(60)).rejects.toThrow(`Battery is at ${percent}%, below your 20% cutoff`);
+    await expect(enable(60)).rejects.toThrow(`Battery is at ${percent}%, at or below your 20% cutoff`);
     expect(system.setSleepDisabled).not.toHaveBeenCalled();
     expect(storedSession()).toBeNull();
   });
@@ -255,9 +271,10 @@ describe("disable", () => {
 describe("menu bar refresh failures", () => {
   it("enable undoes the start when the menu bar command cannot be launched", async () => {
     raycast.launchCommand.mockRejectedValue(new Error("Menu bar command not enabled"));
+    vi.mocked(system.isSleepDisabled).mockResolvedValue(true);
 
     await expect(enable(60)).rejects.toThrow(
-      "Turn on the Lid Awake Menu Bar command in Raycast first. It turns Lid Awake off when the timer ends, the battery is low, or after a restart",
+      "Run Lid Awake Menu Bar once and keep it enabled in Raycast. It turns Lid Awake off when the timer ends, the battery is low, or after a restart",
     );
     expect(vi.mocked(system.setSleepDisabled).mock.calls).toEqual([[true], [false, { allowPrompt: false }]]);
     expect(storedSession()).toBeNull();
@@ -365,11 +382,13 @@ describe("getStatus", () => {
     const gate = new Promise<void>((resolve) => {
       release = resolve;
     });
-    vi.mocked(system.isSleepDisabled).mockImplementation(async () => {
-      order.push("status reads sleep");
-      await gate;
-      return false;
-    });
+    vi.mocked(system.isSleepDisabled)
+      .mockImplementationOnce(async () => {
+        order.push("status reads sleep");
+        await gate;
+        return false;
+      })
+      .mockResolvedValue(true);
     vi.mocked(system.isRuleInstalled).mockImplementation(async () => {
       order.push("enable checks rule");
       return true;

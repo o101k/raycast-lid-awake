@@ -139,7 +139,7 @@ async function requireMenuBar(): Promise<void> {
     await launchCommand({ name: "menu-bar", type: LaunchType.Background });
   } catch {
     throw new Error(
-      "Turn on the Lid Awake Menu Bar command in Raycast first. It turns Lid Awake off when the timer ends, the battery is low, or after a restart",
+      "Run Lid Awake Menu Bar once and keep it enabled in Raycast. It turns Lid Awake off when the timer ends, the battery is low, or after a restart",
     );
   }
 }
@@ -152,7 +152,7 @@ async function startSession(minutes: number | null): Promise<void> {
   const battery = await getBattery();
   if (thresholdPercent > 0 && battery.hasBattery && !battery.onAC && battery.percent != null) {
     if (battery.percent <= thresholdPercent) {
-      throw new Error(`Battery is at ${battery.percent}%, below your ${thresholdPercent}% cutoff`);
+      throw new Error(`Battery is at ${battery.percent}%, at or below your ${thresholdPercent}% cutoff`);
     }
   }
 
@@ -170,6 +170,10 @@ async function startSession(minutes: number | null): Promise<void> {
   } catch (error) {
     await setSleepDisabled(false).catch(() => undefined);
     throw error;
+  }
+  // Auto-off from the menu bar may have turned sleep off while this session was being saved, so turn it back on.
+  if (!(await isSleepDisabled())) {
+    await setSleepDisabled(true);
   }
 }
 
