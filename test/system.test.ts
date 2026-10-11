@@ -6,11 +6,14 @@ import {
   getBattery,
   getBootTime,
   installRule,
+  installRuleScript,
   isRuleInstalled,
   isSleepDisabled,
+  REMOVE_RULE_SCRIPT,
   removeRule,
   runAsAdmin,
   setSleepDisabled,
+  sudoersRule,
 } from "../src/lib/system";
 
 // system.ts promisifies execFile at import time, so the mock keeps the same function object and
@@ -328,5 +331,20 @@ describe("reading system state", () => {
     execHandler = () => failWith("sysctl: unknown oid");
 
     await expect(getBootTime()).rejects.toThrow("sysctl: unknown oid");
+  });
+});
+
+describe("sudoersRule and installRuleScript", () => {
+  it("returns the NOPASSWD rule for pmset disablesleep 0 and 1 only", () => {
+    expect(sudoersRule("alice")).toBe(RULE);
+  });
+
+  it("rejects an unsupported username", () => {
+    expect(() => sudoersRule('al"ice')).toThrow("Unsupported macOS username");
+  });
+
+  it("builds the install script from the same rule and removes the rule with REMOVE_RULE_SCRIPT", () => {
+    expect(installRuleScript("alice")).toContain(`'${RULE}' > "$T"`);
+    expect(REMOVE_RULE_SCRIPT).toBe(`/bin/rm -f ${SUDOERS}`);
   });
 });

@@ -30,3 +30,19 @@ jobs:
       - run: npx prettier --check .
       - run: npm run lint
       - run: npm test
+
+  integration:
+    name: Integration tests (macOS)
+    runs-on: macos-latest
+    steps:
+      - uses: actions/checkout@v5
+
+      - uses: actions/setup-node@v5
+        with:
+          node-version-file: .nvmrc
+          cache: npm
+
+      - run: npm ci
+      - run: npm run test:integration
+        env:
+          LID_AWAKE_INTEGRATION: "1"
