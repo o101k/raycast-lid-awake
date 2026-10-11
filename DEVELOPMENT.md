@@ -35,7 +35,7 @@ GitHub Actions (`.github/workflows/ci.yml`) runs all of these on pushes to `mast
 
 `npm run test:integration` (`test/integration/`) runs the real `pmset`, `sudo`, `visudo`, `sysctl`, `dscl` and `mktemp` commands. It covers turning sleep on and off, the sudoers rule for a dedicated test user (install, concurrent and failed installs, removal), and the session rules: timers, restarts, overlapping Starts, a menu bar launch failure and the battery cutoff. Only the Raycast API is faked.
 
-These tests change real sleep and sudoers settings, and they need passwordless sudo. They remove `/etc/sudoers.d/raycast-lid-awake` and turn sleep off when they finish, so on a Mac you use every day, the Lid Awake rule you set up stops working until you run Set up again. Run them only in CI on macOS, or locally on a throwaway Mac with:
+These tests change real sleep and sudoers settings, and they need passwordless sudo. They refuse to run if `/etc/sudoers.d/raycast-lid-awake` or a `lidawakeit` account already exists, so they never remove a real Lid Awake setup or account. Run them only in CI on macOS, or locally on a throwaway Mac with:
 
 ```sh
 LID_AWAKE_INTEGRATION=1 npm run test:integration

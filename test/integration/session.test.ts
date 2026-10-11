@@ -7,10 +7,16 @@ import { assertPasswordlessSudo, rawSleepDisabled, runIntegration, sudoSh } from
 
 // Real session.ts, system.ts and pmset. Only the Raycast API is faked, since it needs the Raycast app.
 
+type StorageHook = (key: string) => void | Promise<void>;
+
 const raycast = vi.hoisted(() => ({
   store: new Map<string, string>(),
   prefs: { batteryThreshold: "20", defaultDuration: "60" } as Record<string, string>,
   launchCommand: vi.fn(),
+  // Optional hooks that run right after a write or removal. They stand in for another Raycast command acting at an
+  // exact point, since that command runs in its own process and cannot be interleaved from here.
+  afterSetItem: undefined as StorageHook | undefined,
+  afterRemoveItem: undefined as StorageHook | undefined,
 }));
 
 vi.mock("@raycast/api", () => ({
@@ -22,15 +28,18 @@ vi.mock("@raycast/api", () => ({
     allItems: async () => Object.fromEntries(raycast.store),
     setItem: async (key: string, value: string) => {
       raycast.store.set(key, value);
+      await raycast.afterSetItem?.(key);
     },
     removeItem: async (key: string) => {
       raycast.store.delete(key);
+      await raycast.afterRemoveItem?.(key);
     },
   },
 }));
 
 const MINUTE = 60_000;
 const PMSET_OFF = "/usr/bin/pmset -a disablesleep 0";
+const PMSET_ON = "/usr/bin/pmset -a disablesleep 1";
 
 async function storedSessionKeys(): Promise<string[]> {
   return Object.keys(await LocalStorage.allItems()).filter((key) => key.startsWith("session:"));
@@ -53,6 +62,8 @@ describe.runIf(runIntegration)("session.ts on macOS", () => {
     raycast.prefs.defaultDuration = "60";
     raycast.launchCommand.mockReset();
     raycast.launchCommand.mockResolvedValue(undefined);
+    raycast.afterSetItem = undefined;
+    raycast.afterRemoveItem = undefined;
     sudoSh(PMSET_OFF);
   });
 
@@ -174,6 +185,62 @@ describe.runIf(runIntegration)("session.ts on macOS", () => {
       expect(rawSleepDisabled()).toBe(true);
       expect(await storedSessionKeys()).toHaveLength(1);
       expectEndsIn((await getStatus()).session?.endsAt, 120, before, after);
+    });
+
+    it("keeps another Start's timer when the first Start's menu bar launch fails after the second Start saved", async () => {
+      let rejectFirstLaunch!: (error: Error) => void;
+      raycast.launchCommand.mockImplementationOnce(
+        () =>
+          new Promise((_resolve, reject) => {
+            rejectFirstLaunch = reject;
+          }),
+      );
+
+      const first = enable(30);
+      await vi.waitFor(() => expect(raycast.launchCommand).toHaveBeenCalledTimes(1));
+      const before = Date.now();
+      await enable(60);
+      const after = Date.now();
+      rejectFirstLaunch(new Error("menu bar command is not enabled"));
+
+      await expect(first).rejects.toThrow("Run Lid Awake Menu Bar once");
+      expect(rawSleepDisabled()).toBe(true);
+      expect(await storedSessionKeys()).toHaveLength(1);
+      expectEndsIn((await getStatus()).session?.endsAt, 60, before, after);
+    });
+
+    it("leaves sleep allowed and no session when a Turn Off in another command runs right after a Start saves", async () => {
+      let fired = false;
+      raycast.afterSetItem = (key) => {
+        if (!fired && key.startsWith("session:")) {
+          fired = true;
+          sudoSh(PMSET_OFF);
+          raycast.store.clear();
+        }
+      };
+
+      await enable(30);
+
+      expect(fired).toBe(true);
+      expect(rawSleepDisabled()).toBe(false);
+      expect(await storedSessionKeys()).toEqual([]);
+    });
+
+    it("leaves sleep allowed when a Start in another command disables it while a Turn Off clears the sessions", async () => {
+      await enable(30);
+      let fired = false;
+      raycast.afterRemoveItem = (key) => {
+        if (!fired && key.startsWith("session:")) {
+          fired = true;
+          sudoSh(PMSET_ON);
+        }
+      };
+
+      await disable();
+
+      expect(fired).toBe(true);
+      expect(rawSleepDisabled()).toBe(false);
+      expect(await storedSessionKeys()).toEqual([]);
     });
   });
 

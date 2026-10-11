@@ -77,7 +77,13 @@ function freeUid(): number {
   return uid;
 }
 
+// Set once the checks in beforeAll pass. Until then nothing is reset, so a refused run leaves the Mac as it was.
+let ownsSystem = false;
+
 function restoreSystem(): void {
+  if (!ownsSystem) {
+    return;
+  }
   sudoSh(`${PMSET} -a disablesleep 0`);
   sudoSh(REMOVE_RULE_SCRIPT);
 }
@@ -85,6 +91,11 @@ function restoreSystem(): void {
 describe.runIf(runIntegration)("system.ts on macOS", () => {
   beforeAll(() => {
     assertPasswordlessSudo();
+    // These tests replace and remove the rule file, so a Mac where Lid Awake is set up is never used.
+    if (succeeds(SUDO, ["-n", "/bin/test", "-e", SUDOERS_PATH])) {
+      throw new Error(`${SUDOERS_PATH} already exists; the integration tests will not touch it`);
+    }
+    ownsSystem = true;
     restoreSystem();
   });
 
@@ -148,9 +159,12 @@ describe.runIf(runIntegration)("system.ts on macOS", () => {
   });
 
   describe("the rule for a dedicated user", () => {
+    // Only an account this run created is deleted. An existing account with this name is never touched.
+    let createdUser = false;
+
     beforeAll(() => {
       if (userExists()) {
-        sudoSh(`${DSCL} . -delete /Users/${TEST_USER}`);
+        throw new Error(`An account named ${TEST_USER} already exists; the integration tests will not touch it`);
       }
       const uid = freeUid();
       sudoSh(`${DSCL} . -create /Users/${TEST_USER}`);
@@ -158,11 +172,12 @@ describe.runIf(runIntegration)("system.ts on macOS", () => {
       sudoSh(`${DSCL} . -create /Users/${TEST_USER} UniqueID ${uid}`);
       sudoSh(`${DSCL} . -create /Users/${TEST_USER} PrimaryGroupID 20`);
       sudoSh(`${DSCL} . -create /Users/${TEST_USER} NFSHomeDirectory /var/empty`);
+      createdUser = true;
     });
 
     afterAll(() => {
       restoreSystem();
-      if (userExists()) {
+      if (createdUser && userExists()) {
         sudoSh(`${DSCL} . -delete /Users/${TEST_USER}`);
       }
     });
