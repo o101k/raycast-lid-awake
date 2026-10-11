@@ -39,20 +39,26 @@ const MINUTE = 60_000;
 const BOOT = 1728633600;
 const ON_BATTERY_80: Battery = { hasBattery: true, percent: 80, onAC: false };
 
-function sessionKey(session: Session): string {
-  return `session:${session.startedAt}`;
+// The next sequence number after the stored session keys, as a new Start would compute it.
+function nextSeq(): number {
+  const seqs = [...raycast.store.keys()]
+    .filter((key) => key.startsWith("session:"))
+    .map((key) => Number(key.slice("session:".length)));
+  return Math.max(0, ...seqs) + 1;
 }
 
-// The newest stored session, which is the one the extension treats as current.
+// Stores a session under session:<seq>, by default the next sequence number. Returns the sequence number used.
+function seedSession(session: Session, seq = nextSeq()): number {
+  raycast.store.set(`session:${seq}`, JSON.stringify(session));
+  return seq;
+}
+
+// The stored session with the highest sequence number, which is the one the extension treats as current.
 function storedSession(): Session | null {
   const sessions = [...raycast.store.entries()]
     .filter(([key]) => key.startsWith("session:"))
-    .map(([, raw]) => JSON.parse(raw) as Session);
-  return sessions.sort((a, b) => b.startedAt - a.startedAt)[0] ?? null;
-}
-
-function seedSession(session: Session): void {
-  raycast.store.set(sessionKey(session), JSON.stringify(session));
+    .map(([key, raw]) => ({ seq: Number(key.slice("session:".length)), session: JSON.parse(raw) as Session }));
+  return sessions.sort((a, b) => b.seq - a.seq)[0]?.session ?? null;
 }
 
 function setBattery(battery: Battery): void {
@@ -124,16 +130,58 @@ describe("enable", () => {
     expect(storedSession()).toEqual({ startedAt: NOW, endsAt: null, bootTime: BOOT });
   });
 
-  it("removes older sessions when it saves, but keeps a newer one", async () => {
-    seedSession({ startedAt: NOW - 5 * MINUTE, endsAt: null, bootTime: BOOT });
-    seedSession({ startedAt: NOW + 10 * MINUTE, endsAt: null, bootTime: BOOT });
+  it("removes older sessions when it saves", async () => {
+    seedSession({ startedAt: NOW - 10 * MINUTE, endsAt: null, bootTime: BOOT }, 1);
+    seedSession({ startedAt: NOW - 5 * MINUTE, endsAt: null, bootTime: BOOT }, 2);
 
     await enable(60);
 
-    expect(raycast.store.has(`session:${NOW - 5 * MINUTE}`)).toBe(false);
-    expect(raycast.store.has(`session:${NOW}`)).toBe(true);
-    expect(raycast.store.has(`session:${NOW + 10 * MINUTE}`)).toBe(true);
-    expect(raycast.store.size).toBe(2);
+    expect([...raycast.store.keys()]).toEqual(["session:3"]);
+    expect(storedSession()).toEqual({ startedAt: NOW, endsAt: NOW + 60 * MINUTE, bootTime: BOOT });
+  });
+
+  it("keeps the new session when the clock moved backward since the last Start", async () => {
+    // NTP or a manual change can move the clock back while a session is active. The new start time is then earlier
+    // than the stored one, so ordering by start time would keep the old session.
+    const indefinite = seedSession({ startedAt: NOW, endsAt: null, bootTime: BOOT });
+    vi.setSystemTime(NOW - 60 * MINUTE);
+    vi.mocked(system.isSleepDisabled).mockResolvedValue(true);
+
+    await enable(30);
+
+    const startedAt = NOW - 60 * MINUTE;
+    const session = { startedAt, endsAt: startedAt + 30 * MINUTE, bootTime: BOOT };
+    expect(raycast.store.has(`session:${indefinite}`)).toBe(false);
+    expect(storedSession()).toEqual(session);
+    expect(raycast.store.size).toBe(1);
+    await expect(getStatus()).resolves.toEqual({ on: true, session, battery: ON_BATTERY_80 });
+  });
+
+  it("replaces a session saved under an old timestamp key", async () => {
+    // Builds before sequence numbers stored the start time in the key. A new Start must still replace that session.
+    raycast.store.set(`session:${NOW}`, JSON.stringify({ startedAt: NOW, endsAt: null, bootTime: BOOT }));
+
+    await enable(60);
+
+    expect(raycast.store.has(`session:${NOW}`)).toBe(false);
+    expect(raycast.store.size).toBe(1);
+    expect(storedSession()).toEqual({ startedAt: NOW, endsAt: NOW + 60 * MINUTE, bootTime: BOOT });
+  });
+
+  it("keeps a session with a higher sequence number that an overlapping Start saved", async () => {
+    // While this Start writes its key, another Start saves session 99. This Start's number is lower, so 99 must survive.
+    const overlapping = { startedAt: NOW - 3 * MINUTE, endsAt: NOW + 57 * MINUTE, bootTime: BOOT };
+    const setItem = vi.spyOn(LocalStorage, "setItem").mockImplementationOnce(async (key, value) => {
+      seedSession(overlapping, 99);
+      raycast.store.set(key, String(value));
+    });
+    vi.mocked(system.isSleepDisabled).mockResolvedValue(true);
+
+    await enable(60);
+
+    expect(raycast.store.has("session:99")).toBe(true);
+    await expect(getStatus()).resolves.toEqual({ on: true, session: overlapping, battery: ON_BATTERY_80 });
+    setItem.mockRestore();
   });
 
   it.each([20, 5])("refuses to turn on at %i percent on battery with a 20 percent cutoff", async (percent) => {
@@ -283,17 +331,18 @@ describe("getStatus", () => {
     // The clear must remove only the stale session's own key, so the new one survives.
     const stale = { startedAt: NOW - 5 * MINUTE, endsAt: null, bootTime: BOOT };
     const fresh = { startedAt: NOW, endsAt: NOW + 60 * MINUTE, bootTime: BOOT };
-    seedSession(stale);
+    const staleSeq = seedSession(stale);
     vi.mocked(system.isSleepDisabled).mockResolvedValue(false);
+    let freshSeq = 0;
     const removeItem = vi.spyOn(LocalStorage, "removeItem").mockImplementationOnce(async (key) => {
-      seedSession(fresh);
+      freshSeq = seedSession(fresh);
       raycast.store.delete(key);
     });
 
     await getStatus();
 
-    expect(removeItem).toHaveBeenCalledWith(sessionKey(stale));
-    expect([...raycast.store.keys()]).toEqual([sessionKey(fresh)]);
+    expect(removeItem).toHaveBeenCalledWith(`session:${staleSeq}`);
+    expect([...raycast.store.keys()]).toEqual([`session:${freshSeq}`]);
     removeItem.mockRestore();
   });
 
@@ -415,17 +464,18 @@ describe("enforce race", () => {
     // The expired session is cleared after the check, so a Start that saves in between must survive the clear.
     const expired = { startedAt: NOW - 61 * MINUTE, endsAt: NOW - MINUTE, bootTime: BOOT };
     const fresh = { startedAt: NOW, endsAt: NOW + 60 * MINUTE, bootTime: BOOT };
-    seedSession(expired);
+    const expiredSeq = seedSession(expired);
     vi.mocked(system.isSleepDisabled).mockResolvedValue(true);
+    let freshSeq = 0;
     const removeItem = vi.spyOn(LocalStorage, "removeItem").mockImplementationOnce(async (key) => {
-      seedSession(fresh);
+      freshSeq = seedSession(fresh);
       raycast.store.delete(key);
     });
 
     await expect(enforce()).resolves.toBe("timer");
 
-    expect(removeItem).toHaveBeenCalledWith(sessionKey(expired));
-    expect([...raycast.store.keys()]).toEqual([sessionKey(fresh)]);
+    expect(removeItem).toHaveBeenCalledWith(`session:${expiredSeq}`);
+    expect([...raycast.store.keys()]).toEqual([`session:${freshSeq}`]);
     removeItem.mockRestore();
   });
 });
