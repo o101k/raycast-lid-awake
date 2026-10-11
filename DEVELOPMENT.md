@@ -5,7 +5,7 @@
 Prerequisites: macOS, Raycast, Node.js 22.22.2 (the version Raycast runs extensions on, pinned in `.nvmrc`), npm, and git.
 
 ```sh
-git clone https://github.com/omarkar101/raycast-lid-awake.git
+git clone https://github.com/o101k/raycast-lid-awake.git
 cd raycast-lid-awake
 nvm use    # uses the Node version in .nvmrc; run `nvm install` first if you don't have it
 npm install
