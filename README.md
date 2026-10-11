@@ -89,7 +89,7 @@ It lets your user run only those two `pmset` commands as root without a password
 
 ## Deploy to the Raycast Store
 
-1. Create a Raycast account and set `author` in `package.json` to your Raycast username.
+1. `author` in `package.json` is set to your Raycast username (`o101k`).
 2. The Store requires the MIT license. This repo is already MIT (`LICENSE` and `package.json`).
 3. Add 3 screenshots to a `metadata/` folder, 2000x1250 PNG each. Use Raycast's Window Capture with "Save to Metadata".
 4. `npm run lint` and `npm run build` must pass.
