@@ -244,6 +244,61 @@ describe("enable", () => {
     await expect(enable(60)).resolves.toBeUndefined();
     expect(system.setSleepDisabled).toHaveBeenCalledWith(true);
   });
+
+  it("replaces the active session and reports the new one from getStatus", async () => {
+    const old = seedSession({ startedAt: NOW - 10 * MINUTE, endsAt: null, bootTime: BOOT });
+    vi.mocked(system.isSleepDisabled).mockResolvedValue(true);
+
+    await enable(60);
+
+    const fresh = { startedAt: NOW, endsAt: NOW + 60 * MINUTE, bootTime: BOOT };
+    expect(raycast.store.has(`session:${old}`)).toBe(false);
+    expect(raycast.store.size).toBe(1);
+    await expect(getStatus()).resolves.toEqual({ on: true, session: fresh, battery: ON_BATTERY_80 });
+  });
+
+  it("stores an indefinite session when enable is given 0 minutes", async () => {
+    await enable(0);
+
+    expect(storedSession()).toEqual({ startedAt: NOW, endsAt: null, bootTime: BOOT });
+  });
+
+  it("keeps the new session when removing an older session fails during enable", async () => {
+    const old = seedSession({ startedAt: NOW - 10 * MINUTE, endsAt: null, bootTime: BOOT }, 1);
+    const removeItem = vi.spyOn(LocalStorage, "removeItem").mockRejectedValueOnce(new Error("storage busy"));
+    vi.mocked(system.isSleepDisabled).mockResolvedValue(true);
+
+    await expect(enable(60)).resolves.toBeUndefined();
+
+    const fresh = { startedAt: NOW, endsAt: NOW + 60 * MINUTE, bootTime: BOOT };
+    expect(raycast.store.has(`session:${old}`)).toBe(true);
+    expect(storedSession()).toEqual(fresh);
+    await expect(getStatus()).resolves.toEqual({ on: true, session: fresh, battery: ON_BATTERY_80 });
+    removeItem.mockRestore();
+  });
+
+  it("rejects with the menu bar message when the menu bar cannot launch and the undo also fails", async () => {
+    raycast.launchCommand.mockRejectedValue(new Error("Menu bar command not enabled"));
+    vi.mocked(system.isSleepDisabled).mockResolvedValue(true);
+    vi.mocked(system.setSleepDisabled).mockImplementation(async (on) => {
+      if (!on) {
+        throw new Error("sudo: a password is required");
+      }
+    });
+
+    await expect(enable(60)).rejects.toThrow("Run Lid Awake Menu Bar once and keep it enabled in Raycast");
+    expect(vi.mocked(system.setSleepDisabled).mock.calls).toEqual([[true], [false, { allowPrompt: false }]]);
+  });
+
+  it("rejects with the error when turning sleep back on after saving the session fails", async () => {
+    // Sleep reads as off after the save, so enable tries to turn it on again, and that attempt fails.
+    vi.mocked(system.setSleepDisabled)
+      .mockResolvedValueOnce(undefined)
+      .mockRejectedValueOnce(new Error("sudo: re-assert failed"));
+
+    await expect(enable(60)).rejects.toThrow("sudo: re-assert failed");
+    expect(raycast.launchCommand).not.toHaveBeenCalled();
+  });
 });
 
 describe("disable", () => {
@@ -265,6 +320,24 @@ describe("disable", () => {
     await disable();
 
     expect([...raycast.store.keys()]).toEqual([]);
+  });
+
+  it("passes allowPrompt false through when it is asked not to prompt", async () => {
+    seedSession({ startedAt: NOW - MINUTE, endsAt: null, bootTime: BOOT });
+
+    await disable({ allowPrompt: false });
+
+    expect(system.setSleepDisabled).toHaveBeenCalledWith(false, { allowPrompt: false });
+    expect(storedSession()).toBeNull();
+  });
+
+  it("rejects and keeps the stored session when sleep cannot be turned back on", async () => {
+    const session = { startedAt: NOW - MINUTE, endsAt: null, bootTime: BOOT };
+    seedSession(session);
+    vi.mocked(system.setSleepDisabled).mockRejectedValue(new Error("sudo: a password is required"));
+
+    await expect(disable()).rejects.toThrow("sudo: a password is required");
+    expect(storedSession()).toEqual(session);
   });
 });
 
@@ -401,6 +474,34 @@ describe("getStatus", () => {
 
     expect(order).toEqual(["status reads sleep", "enable checks rule"]);
   });
+
+  it("runs a disable that starts during an enable only after the enable has saved its session", async () => {
+    let release!: () => void;
+    const gate = new Promise<void>((resolve) => {
+      release = resolve;
+    });
+    // Holds enable partway through its start, before it turns sleep on or saves the session.
+    vi.mocked(system.getBootTime).mockImplementationOnce(async () => {
+      await gate;
+      return BOOT;
+    });
+
+    const turnOn = enable(60);
+    const turnOff = disable();
+    expect(system.setSleepDisabled).not.toHaveBeenCalled();
+    release();
+    await Promise.all([turnOn, turnOff]);
+
+    expect(vi.mocked(system.setSleepDisabled).mock.calls).toEqual([[true], [true], [false, { allowPrompt: true }]]);
+    expect(storedSession()).toBeNull();
+  });
+
+  it("returns the battery reading from getBattery", async () => {
+    const reading: Battery = { hasBattery: true, percent: 42, onAC: true };
+    setBattery(reading);
+
+    await expect(getStatus()).resolves.toEqual({ on: false, session: null, battery: reading });
+  });
 });
 
 describe("enforce", () => {
@@ -452,6 +553,57 @@ describe("enforce", () => {
     const session = { startedAt: NOW - MINUTE, endsAt: NOW + 59 * MINUTE, bootTime: BOOT };
     seedSession(session);
     vi.mocked(system.isSleepDisabled).mockResolvedValue(true);
+
+    await expect(enforce()).resolves.toBeNull();
+    expect(system.setSleepDisabled).not.toHaveBeenCalled();
+    expect(storedSession()).toEqual(session);
+  });
+
+  it("refreshes the menu bar when auto-off turns sleep back on", async () => {
+    seedSession({ startedAt: NOW - 61 * MINUTE, endsAt: NOW - MINUTE, bootTime: BOOT });
+    vi.mocked(system.isSleepDisabled).mockResolvedValue(true);
+
+    await expect(enforce()).resolves.toBe("timer");
+    expect(raycast.launchCommand).toHaveBeenCalledTimes(1);
+    expect(raycast.launchCommand).toHaveBeenCalledWith({ name: "menu-bar", type: "background" });
+  });
+
+  it("does not refresh the menu bar when no rule applies", async () => {
+    seedSession({ startedAt: NOW - MINUTE, endsAt: NOW + 59 * MINUTE, bootTime: BOOT });
+    vi.mocked(system.isSleepDisabled).mockResolvedValue(true);
+
+    await expect(enforce()).resolves.toBeNull();
+    expect(raycast.launchCommand).not.toHaveBeenCalled();
+  });
+
+  it("rejects and keeps the session when turning sleep back on fails during auto-off", async () => {
+    const expired = { startedAt: NOW - 61 * MINUTE, endsAt: NOW - MINUTE, bootTime: BOOT };
+    seedSession(expired);
+    vi.mocked(system.isSleepDisabled).mockResolvedValue(true);
+    vi.mocked(system.setSleepDisabled).mockRejectedValue(new Error("sudo: a password is required"));
+
+    await expect(enforce()).rejects.toThrow("sudo: a password is required");
+    expect(storedSession()).toEqual(expired);
+    expect(raycast.launchCommand).not.toHaveBeenCalled();
+  });
+
+  it("never auto-disables on battery when the cutoff is Off (0), even at 1%", async () => {
+    raycast.prefs = { ...raycast.prefs, batteryThreshold: "0" };
+    const session = { startedAt: NOW - MINUTE, endsAt: null, bootTime: BOOT };
+    seedSession(session);
+    vi.mocked(system.isSleepDisabled).mockResolvedValue(true);
+    setBattery({ hasBattery: true, percent: 1, onAC: false });
+
+    await expect(enforce()).resolves.toBeNull();
+    expect(system.setSleepDisabled).not.toHaveBeenCalled();
+    expect(storedSession()).toEqual(session);
+  });
+
+  it("never times out an indefinite session, however much time passes", async () => {
+    const session = { startedAt: NOW - MINUTE, endsAt: null, bootTime: BOOT };
+    seedSession(session);
+    vi.mocked(system.isSleepDisabled).mockResolvedValue(true);
+    vi.setSystemTime(NOW + 365 * 24 * 60 * MINUTE);
 
     await expect(enforce()).resolves.toBeNull();
     expect(system.setSleepDisabled).not.toHaveBeenCalled();
@@ -535,5 +687,83 @@ describe("getDefaultMinutes", () => {
     raycast.prefs = { ...raycast.prefs, defaultDuration: "120" };
 
     expect(getDefaultMinutes()).toBe(120);
+  });
+
+  it.each(["", "abc"])("returns null when the default duration is %j", (value) => {
+    raycast.prefs = { ...raycast.prefs, defaultDuration: value };
+
+    expect(getDefaultMinutes()).toBeNull();
+  });
+});
+
+describe("low battery cutoff preference", () => {
+  it.each(["", "abc"])("treats the cutoff %j as Off, so enable is allowed at 5 percent on battery", async (value) => {
+    raycast.prefs = { ...raycast.prefs, batteryThreshold: value };
+    setBattery({ hasBattery: true, percent: 5, onAC: false });
+
+    await expect(enable(60)).resolves.toBeUndefined();
+    expect(system.setSleepDisabled).toHaveBeenCalledWith(true);
+  });
+});
+
+describe("stored session entries", () => {
+  it("ignores LocalStorage keys that are not sessions and keeps them", async () => {
+    raycast.store.set("preferences-cache", "1");
+    raycast.store.set("session-notes", "keep me");
+    const session = { startedAt: NOW - MINUTE, endsAt: null, bootTime: BOOT };
+    seedSession(session);
+    vi.mocked(system.isSleepDisabled).mockResolvedValue(true);
+
+    await expect(getStatus()).resolves.toEqual({ on: true, session, battery: ON_BATTERY_80 });
+    expect(raycast.store.get("preferences-cache")).toBe("1");
+    expect(raycast.store.get("session-notes")).toBe("keep me");
+  });
+
+  it("keeps non-session keys when Lid Awake is turned off", async () => {
+    raycast.store.set("session-notes", "keep me");
+    seedSession({ startedAt: NOW - MINUTE, endsAt: null, bootTime: BOOT });
+
+    await disable();
+
+    expect(storedSession()).toBeNull();
+    expect(raycast.store.get("session-notes")).toBe("keep me");
+  });
+
+  it.each(["session:abc", "session:0", "session:-3"])("ignores the key %s when reading the session", async (key) => {
+    raycast.store.set(key, JSON.stringify({ startedAt: NOW - MINUTE, endsAt: null, bootTime: BOOT }));
+    vi.mocked(system.isSleepDisabled).mockResolvedValue(true);
+
+    await expect(getStatus()).resolves.toEqual({ on: true, session: null, battery: ON_BATTERY_80 });
+  });
+
+  it("ignores a session value that is not valid JSON", async () => {
+    raycast.store.set("session:1", "{not json");
+    vi.mocked(system.isSleepDisabled).mockResolvedValue(true);
+
+    await expect(getStatus()).resolves.toEqual({ on: true, session: null, battery: ON_BATTERY_80 });
+  });
+
+  it("ignores a session value that has no startedAt time", async () => {
+    raycast.store.set("session:1", JSON.stringify({ endsAt: null, bootTime: BOOT }));
+    vi.mocked(system.isSleepDisabled).mockResolvedValue(true);
+
+    await expect(getStatus()).resolves.toEqual({ on: true, session: null, battery: ON_BATTERY_80 });
+  });
+
+  it("falls back to the newest readable session when the newest value is corrupt", async () => {
+    const session = { startedAt: NOW - MINUTE, endsAt: null, bootTime: BOOT };
+    seedSession(session, 1);
+    raycast.store.set("session:2", "corrupt");
+    vi.mocked(system.isSleepDisabled).mockResolvedValue(true);
+
+    await expect(getStatus()).resolves.toEqual({ on: true, session, battery: ON_BATTERY_80 });
+  });
+
+  it("treats the session as absent when LocalStorage cannot be read", async () => {
+    const allItems = vi.spyOn(LocalStorage, "allItems").mockRejectedValue(new Error("storage unavailable"));
+    vi.mocked(system.isSleepDisabled).mockResolvedValue(true);
+
+    await expect(getStatus()).resolves.toEqual({ on: true, session: null, battery: ON_BATTERY_80 });
+    allItems.mockRestore();
   });
 });

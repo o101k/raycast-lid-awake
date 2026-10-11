@@ -9,6 +9,7 @@ import {
   isRuleInstalled,
   isSleepDisabled,
   removeRule,
+  runAsAdmin,
   setSleepDisabled,
 } from "../src/lib/system";
 
@@ -118,11 +119,38 @@ describe("setSleepDisabled", () => {
     expect(calls[1].args[1]).toContain("with administrator privileges");
   });
 
+  it("runs pmset disablesleep 1 as an admin when sudo fails and allowPrompt is true", async () => {
+    execHandler = (file) => (file === SUDO ? failWith("sudo: a password is required") : { stdout: "" });
+
+    await setSleepDisabled(true, { allowPrompt: true });
+
+    expect(calls[1]).toEqual({
+      file: OSASCRIPT,
+      args: ["-e", 'do shell script "/usr/bin/pmset -a disablesleep 1" with administrator privileges'],
+    });
+  });
+
   it("rejects when the admin prompt is cancelled", async () => {
     execHandler = (file) =>
       file === SUDO ? failWith("sudo: a password is required") : failWith("execution error: User canceled. (-128)");
 
     await expect(setSleepDisabled(true, { allowPrompt: true })).rejects.toThrow("-128");
+  });
+});
+
+describe("runAsAdmin", () => {
+  it("escapes double quotes and backslashes in the shell command for the AppleScript string", async () => {
+    const shell = 'echo "a" \\"b\\" C:\\temp';
+
+    await runAsAdmin(shell);
+
+    expect(calls).toEqual([
+      {
+        file: OSASCRIPT,
+        args: ["-e", 'do shell script "echo \\"a\\" \\\\\\"b\\\\\\" C:\\\\temp" with administrator privileges'],
+      },
+    ]);
+    expect(adminShellCommand()).toBe(shell);
   });
 });
 
@@ -215,6 +243,29 @@ describe("installRule", () => {
       expect(calls).toEqual([]);
     },
   );
+
+  it.each(["first.last", "a-b_c"])("accepts the username %j and embeds it in the sudoers rule", async (username) => {
+    vi.mocked(os.userInfo).mockReturnValue(userNamed(username));
+
+    await installRule();
+
+    expect(adminShellCommand()).toContain(
+      `'${username} ALL=(root) NOPASSWD: ${PMSET} -a disablesleep 0, ${PMSET} -a disablesleep 1'`,
+    );
+  });
+
+  it("rejects an empty username before running anything", async () => {
+    vi.mocked(os.userInfo).mockReturnValue(userNamed(""));
+
+    await expect(installRule()).rejects.toThrow("Unsupported macOS username");
+    expect(calls).toEqual([]);
+  });
+
+  it("rejects with the admin error when visudo rejects the staged rule", async () => {
+    execHandler = () => failWith("execution error: /usr/sbin/visudo: syntax error near line 1 (1)");
+
+    await expect(installRule()).rejects.toThrow("syntax error");
+  });
 });
 
 describe("removeRule", () => {
@@ -227,6 +278,12 @@ describe("removeRule", () => {
         args: ["-e", `do shell script "/bin/rm -f /etc/sudoers.d/raycast-lid-awake" with administrator privileges`],
       },
     ]);
+  });
+
+  it("rejects when the admin prompt is cancelled", async () => {
+    execHandler = () => failWith("execution error: User canceled. (-128)");
+
+    await expect(removeRule()).rejects.toThrow("-128");
   });
 });
 
@@ -253,5 +310,23 @@ describe("reading system state", () => {
 
     await expect(getBootTime()).resolves.toBe(1728633600);
     expect(calls).toEqual([{ file: SYSCTL, args: ["-n", "kern.boottime"] }]);
+  });
+
+  it("isSleepDisabled rejects when pmset fails", async () => {
+    execHandler = () => failWith("pmset: failed to read power settings");
+
+    await expect(isSleepDisabled()).rejects.toThrow("pmset: failed to read power settings");
+  });
+
+  it("getBattery rejects when pmset fails", async () => {
+    execHandler = () => failWith("pmset: failed to read battery");
+
+    await expect(getBattery()).rejects.toThrow("pmset: failed to read battery");
+  });
+
+  it("getBootTime rejects when sysctl fails", async () => {
+    execHandler = () => failWith("sysctl: unknown oid");
+
+    await expect(getBootTime()).rejects.toThrow("sysctl: unknown oid");
   });
 });
