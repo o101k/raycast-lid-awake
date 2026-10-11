@@ -72,13 +72,21 @@ export async function enable(minutes: number | null): Promise<void> {
     }
   }
 
-  await setSleepDisabled(true);
+  const bootTime = await getBootTime();
   const now = Date.now();
-  await writeSession({
+  const session: Session = {
     startedAt: now,
     endsAt: minutes ? now + minutes * 60_000 : null,
-    bootTime: await getBootTime(),
-  });
+    bootTime,
+  };
+
+  await setSleepDisabled(true);
+  try {
+    await writeSession(session);
+  } catch (error) {
+    await setSleepDisabled(false).catch(() => undefined);
+    throw error;
+  }
   await refreshMenuBar();
 }
 

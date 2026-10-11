@@ -25,11 +25,12 @@ Preferences:
 
 ## Install locally
 
-Prerequisites: macOS, Raycast, Node.js 22 or newer, npm, and git.
+Prerequisites: macOS, Raycast, Node.js 22.22.2 (the version Raycast runs extensions on, pinned in `.nvmrc`), npm, and git.
 
 ```sh
 git clone https://github.com/omarkar101/raycast-lid-awake.git
 cd raycast-lid-awake
+nvm use    # uses the Node version in .nvmrc; run `nvm install` first if you don't have it
 npm install
 npm run dev
 ```
@@ -96,7 +97,7 @@ npm run lint       # ray lint: ESLint, Prettier, manifest checks (needs internet
 npm run build      # production build
 ```
 
-GitHub Actions (`.github/workflows/ci.yml`) runs all of these on pushes to `master` and on every pull request.
+GitHub Actions (`.github/workflows/ci.yml`) runs all of these on pushes to `master` and on every pull request. CI uses the Node version in `.nvmrc` (22.22.2), so local runs match it.
 
 ## Deploy to the Raycast Store
 

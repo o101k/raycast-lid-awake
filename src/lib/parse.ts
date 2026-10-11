@@ -45,7 +45,11 @@ export function shouldAutoDisable(input: {
 }): AutoDisableReason | null {
   const { session, currentBootTime, now, battery, thresholdPercent } = input;
 
-  if (session && currentBootTime != null && session.bootTime != null && session.bootTime !== currentBootTime) {
+  // Auto-off only applies to sessions the extension started.
+  if (session === null) {
+    return null;
+  }
+  if (currentBootTime != null && session.bootTime != null && session.bootTime !== currentBootTime) {
     return "restart";
   }
   if (session?.endsAt != null && now >= session.endsAt) {

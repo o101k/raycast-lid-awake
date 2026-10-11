@@ -1,6 +1,7 @@
 import { beforeEach, afterEach, describe, expect, it, vi } from "vitest";
 import * as system from "../src/lib/system";
 import { disable, durationLabel, enable, enforce, getDefaultMinutes, getStatus } from "../src/lib/session";
+import { LocalStorage } from "@raycast/api";
 import type { Battery, Session } from "../src/lib/parse";
 
 const raycast = vi.hoisted(() => ({
@@ -75,6 +76,25 @@ describe("enable", () => {
     expect(system.setSleepDisabled).toHaveBeenCalledWith(true);
     expect(storedSession()).toEqual({ startedAt: NOW, endsAt: NOW + 60 * MINUTE, bootTime: BOOT });
     expect(raycast.launchCommand).toHaveBeenCalledWith({ name: "menu-bar", type: "background" });
+  });
+
+  it("does not turn sleep off when the boot time cannot be read", async () => {
+    vi.mocked(system.getBootTime).mockRejectedValue(new Error("sysctl failed"));
+
+    await expect(enable(60)).rejects.toThrow("sysctl failed");
+    expect(system.setSleepDisabled).not.toHaveBeenCalled();
+    expect(storedSession()).toBeNull();
+  });
+
+  it("turns sleep back off and rejects when the session cannot be saved", async () => {
+    const setItem = vi.spyOn(LocalStorage, "setItem").mockRejectedValueOnce(new Error("disk full"));
+
+    await expect(enable(60)).rejects.toThrow("disk full");
+    expect(system.setSleepDisabled).toHaveBeenCalledTimes(2);
+    expect(system.setSleepDisabled).toHaveBeenNthCalledWith(1, true);
+    expect(system.setSleepDisabled).toHaveBeenNthCalledWith(2, false);
+    expect(setItem).toHaveBeenCalledTimes(1);
+    setItem.mockRestore();
   });
 
   it("stores endsAt null for an indefinite session", async () => {

@@ -177,9 +177,9 @@ describe("shouldAutoDisable", () => {
       expect(shouldAutoDisable({ ...base, session: session(), battery })).toBeNull();
     });
 
-    it("still returns battery when there is no session (enforce() skips this case before calling it)", () => {
-      // Pure-function behavior: only the restart and timer rules need a session.
-      expect(shouldAutoDisable({ ...base, session: null, battery: onBattery(10) })).toBe("battery");
+    it("returns null when there is no session, even on low battery", () => {
+      // Auto-off only applies to sessions the extension started.
+      expect(shouldAutoDisable({ ...base, session: null, battery: onBattery(10) })).toBeNull();
     });
   });
 

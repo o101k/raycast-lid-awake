@@ -13,6 +13,9 @@
   "platforms": [
     "macOS"
   ],
+  "engines": {
+    "node": ">=22.22.2"
+  },
   "preferences": [
     {
       "name": "batteryThreshold",
