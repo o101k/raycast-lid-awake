@@ -1,17 +1,22 @@
 import { Action, ActionPanel, Icon, List, showHUD, showToast, Toast, Color } from "@raycast/api";
 import { usePromise } from "@raycast/utils";
 import { useState } from "react";
-import { PRESETS, disable, durationLabel, enable, getStatus } from "./lib/session";
+import { PRESETS, disable, durationLabel, enable, getStatus, refreshMenuBar } from "./lib/session";
 import { parseDuration } from "./lib/parse";
 import { presetSubtitle, startAccessoryTitle, turnOnMessage } from "./lib/labels";
+import { rememberDuration } from "./lib/recent";
 
 export default function Command() {
   const { data: status, isLoading, revalidate } = usePromise(getStatus);
   const [searchText, setSearchText] = useState("");
 
-  async function start(minutes: number | null) {
+  async function start(minutes: number | null, options: { remember?: boolean } = {}) {
     try {
       await enable(minutes);
+      if (options.remember && minutes !== null) {
+        await rememberDuration(minutes);
+        await refreshMenuBar();
+      }
       await showHUD(turnOnMessage(minutes));
     } catch (error) {
       await showToast({
@@ -58,7 +63,7 @@ export default function Command() {
           icon={{ source: Icon.Pencil, tintColor: Color.Blue }}
           actions={
             <ActionPanel>
-              <Action title="Keep Awake" icon={Icon.Bolt} onAction={() => start(customMinutes)} />
+              <Action title="Keep Awake" icon={Icon.Bolt} onAction={() => start(customMinutes, { remember: true })} />
             </ActionPanel>
           }
         />
